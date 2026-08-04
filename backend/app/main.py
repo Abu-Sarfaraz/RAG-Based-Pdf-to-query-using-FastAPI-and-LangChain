@@ -57,8 +57,11 @@ class AskRequest(BaseModel):
 
 @app.post("/ask")
 def ask(req: AskRequest):
-    return ask_rag(
-        collection=req.collection or "pdf_docs",
-        question=req.question,
-        k=req.k or 4,
-    )
+    try:
+        return ask_rag(
+            collection=req.collection or "pdf_docs",
+            question=req.question,
+            k=req.k or 4,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))

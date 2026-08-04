@@ -6,7 +6,9 @@ Upload a PDF, ask natural-language questions, get answers grounded in the PDF.
 - **FastAPI** backend (`/ingest`, `/ask`, `/health`)
 - **Streamlit** frontend
 - **LangChain** for loading → splitting → embedding → retrieval → LCEL chain
-- **PGVector on Neon** for vector storage and similarity search
+- **FAISS** for in-memory vector storage, persisted to disk between requests
+- **Groq** (`llama-3.3-70b-versatile`) for chat
+- **sentence-transformers** (`all-MiniLM-L6-v2`, 384 dims) for embeddings — runs locally
 
 ## Layout
 ```
@@ -32,19 +34,14 @@ rag-pdf-qa/
 ## Quick start (local, no Docker)
 
 ### 1. Prereqs
-- A Neon Postgres project with the `pgvector` extension enabled:
-  ```sql
-  CREATE EXTENSION IF NOT EXISTS vector;
-  ```
-- An API key for the chat LLM. Default points at **Groq**
-  (`llama-3.3-70b-versatile`). Embeddings are generated locally by
-  `sentence-transformers` (`all-MiniLM-L6-v2`, 384 dims) — no API key
-  needed; the model is bundled into the Docker image.
+- An API key for **Groq** (https://console.groq.com/keys). Embeddings are
+  generated locally by `sentence-transformers` (`all-MiniLM-L6-v2`, 384 dims)
+  — no API key needed; the model is bundled into the Docker image.
 
 ### 2. Configure env
 ```bash
 cp .env.example .env
-# fill in NEON_DATABASE_URL and CHAT_API_KEY
+# fill in CHAT_API_KEY
 ```
 
 ### 3. Backend
@@ -122,6 +119,8 @@ Response:
      - Env vars: `BACKEND_URL` = the public URL of your backend service (e.g. `https://rag-backend-xxxx.onrender.com`)
 4. Open the frontend's public URL.
 
-> **Render RAM note**: the bundled `all-MiniLM-L6-v2` embeddings model uses
-> ~300 MB of RAM at load. Render's free tier (512 MB) is too tight — the
-> paid Starter plan (1 GB) works comfortably.
+> **Cold start on free tier**: Render's free tier spins down the container
+> after 15 min of no traffic. The FAISS index lives in the container's
+> filesystem, so a cold start wipes it. **You'll need to re-ingest your PDF
+> after every cold start** (usually ~30-60s after the first idle). To make
+> the index persistent, attach a Render Disk (paid plan feature).
