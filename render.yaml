@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: rag-backend
+    runtime: python
+    plan: starter        # 1 GB RAM — required for the sentence-transformers model
+    rootDir: backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: NEON_DATABASE_URL
+        sync: false      # paste your Neon connection string manually
+      - key: CHAT_API_KEY
+        sync: false      # paste your Groq key manually
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
+
+  - type: web
+    name: rag-frontend
+    runtime: python
+    plan: free
+    rootDir: frontend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: BACKEND_URL
+        value: https://rag-backend.onrender.com   # update after first backend deploy
