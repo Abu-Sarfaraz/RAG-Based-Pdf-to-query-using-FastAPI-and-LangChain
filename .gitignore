@@ -1,0 +1,42 @@
+# env
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# streamlit
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# build / artifacts
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# uploads
+uploads/
+
+# AI assistant session memory (local-only, not for version control)
+CLAUDE.md
+
+# Bundled IDE/agent symlinks (point to local Python install, useless on other machines)
+frontend/.agents/
+frontend/.claude/
+.agents/
+.claude/
