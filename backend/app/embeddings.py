@@ -1,3 +1,4 @@
+"""Local sentence-transformers embeddings — no API key needed."""
 from langchain_huggingface import HuggingFaceEmbeddings
 
 

@@ -12,7 +12,7 @@ class Settings:
 def get_settings() -> Settings:
     return Settings(
         chat_api_key=os.environ["CHAT_API_KEY"],
-        llm_model=os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile"),
+        llm_model=os.environ.get("LLM_MODEL", "openai/gpt-oss-20b"),
     )
 
 
