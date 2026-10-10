@@ -47,8 +47,10 @@ cp .env.example .env
 ### 3. Backend
 ```bash
 cd backend
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
+# Linux CPU-only setup: avoid downloading CUDA packages for local embeddings.
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
@@ -56,7 +58,7 @@ uvicorn app.main:app --reload --port 8000
 ### 4. Frontend
 ```bash
 cd frontend
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 streamlit run app.py

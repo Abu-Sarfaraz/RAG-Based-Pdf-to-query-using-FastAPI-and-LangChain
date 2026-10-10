@@ -1,4 +1,5 @@
 """Configuration loaded from environment variables."""  # one place for secrets and model names
+from json import load
 import os  # read CHAT_API_KEY / LLM_MODEL from the process environment
 from dataclasses import dataclass  # freeze settings so they can't change at runtime
 from pathlib import Path  # build the path to the project-root .env file
