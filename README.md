@@ -114,4 +114,6 @@ backend/.venv/bin/python scripts/evaluate.py --live --output /tmp/papertrail-eva
 
 This uses the configured Groq key and synthetic PDFs in temporary storage. It checks known facts, page references, a follow-up, an unanswerable question, and isolation between two documents. See [validation notes](docs/VALIDATION.md) for the results from this implementation.
 
+The [issue review](docs/ISSUE_REVIEW.md) records eight confirmed defects found in additional checks, with reproduction evidence, source locations, and recommended fixes.
+
 The frontend's dev requirements include Playwright for browser checks; its PDF.js assets are vendored with their Apache 2.0 license so preview does not require a third-party CDN.
