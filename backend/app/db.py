@@ -1,55 +1,104 @@
-"""Build the FAISS vector store and persist it to disk.
+"""Bounded index cache and atomic, pickle-free FAISS persistence."""
+from collections import OrderedDict
+import json
+from pathlib import Path
+import re
+import shutil
+from threading import RLock
+import uuid
 
-FAISS keeps the index in memory; we save it to a directory so it survives
-between requests. On Render free tier the container restarts on cold start,
-so the index is rebuilt from scratch — users re-ingest their PDFs.
-"""  # explains why we save the index to disk
-import os  # read FAISS_INDEX_DIR if the operator mounted a persistent disk
-from pathlib import Path  # join index dir + collection name safely
-
-from langchain_community.vectorstores import FAISS  # in-memory vector DB we persist to files
-
-from .embeddings import get_embeddings  # same embedder for save and load, or search breaks
-
-INDEX_DIR = Path(os.environ.get("FAISS_INDEX_DIR", "./.faiss_index"))  # default local folder for indexes
-
-
-def _path(collection: str) -> Path:  # each collection is its own subdirectory
-    return INDEX_DIR / collection  # e.g. .faiss_index/pdf_docs
+import faiss
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 
 
-def _load(collection: str) -> FAISS | None:  # reopen a saved index, or None if first ingest
-    """Load a collection from disk, or return None if it doesn't exist."""  # callers branch on None
-    path = _path(collection)  # folder that would hold this collection
-    if (path / "index.faiss").exists():  # FAISS writes this file when save_local succeeds
-        return FAISS.load_local(  # restore vectors + docstore from disk
-            str(path),  # FAISS API wants a string path
-            get_embeddings(),  # must match the model used at ingest
-            allow_dangerous_deserialization=True,  # required to unpickle the LangChain docstore
-        )
-    return None  # nothing ingested yet for this name
+class IndexStore:
+    def __init__(self, root: Path, embeddings_factory, cache_size=4):
+        self.root = root
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.embeddings_factory = embeddings_factory
+        self.cache_size = cache_size
+        self.cache = OrderedDict()
+        self.lock = RLock()
 
+    def path(self, document_id, version):
+        if not re.fullmatch(r"[a-f0-9]{32}", document_id) or not re.fullmatch(r"[a-f0-9]{32}", version):
+            raise ValueError("Invalid document index identity")
+        path = self.root / document_id / version
+        if not path.resolve().is_relative_to(self.root.resolve()):
+            raise ValueError("Document path escaped storage")
+        return path
 
-def _save(store: FAISS, collection: str) -> None:  # persist so the next request can reload
-    path = _path(collection)  # target folder for this collection
-    path.mkdir(parents=True, exist_ok=True)  # create dirs if this is the first save
-    store.save_local(str(path))  # write index.faiss + pickle sidecar
+    @property
+    def tokenizer(self):
+        model = self.embeddings_factory()
+        tokenizer = getattr(model, "tokenizer", None)
+        return tokenizer if tokenizer is not None else model._client.tokenizer
 
+    def remember(self, key, store):
+        self.cache[key] = store
+        self.cache.move_to_end(key)
+        while len(self.cache) > self.cache_size:
+            self.cache.popitem(last=False)
 
-def get_retriever(collection: str, k: int):  # used by /ask to fetch the top-k chunks
-    """Return a retriever over a FAISS collection (or None if empty)."""  # LangChain retriever interface
-    store = _load(collection)  # need an existing index
-    if store is None:  # user asked before uploading a PDF
-        raise ValueError(f"Collection '{collection}' not found. Ingest a PDF first.")  # becomes HTTP 404
-    return store.as_retriever(search_kwargs={"k": k})  # similarity search returning k docs
+    def build(self, document_id, documents):
+        version = uuid.uuid4().hex
+        destination = self.path(document_id, version)
+        temporary = destination.with_name(version + ".tmp")
+        temporary.mkdir(parents=True)
+        try:
+            with self.lock:
+                store = FAISS.from_documents(documents, self.embeddings_factory())
+                faiss.write_index(store.index, str(temporary / "index.faiss"))
+                saved_documents = []
+                for doc_id in store.index_to_docstore_id.values():
+                    doc = store.docstore.search(doc_id)
+                    saved_documents.append({"id": doc_id, "page_content": doc.page_content, "metadata": doc.metadata})
+                (temporary / "documents.json").write_text(json.dumps({
+                    "documents": saved_documents, "mapping": store.index_to_docstore_id
+                }, ensure_ascii=False), encoding="utf-8")
+                temporary.rename(destination)
+                self.remember((document_id, version), store)
+            return version
+        except BaseException:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
 
+    def load(self, document_id, version):
+        key = (document_id, version)
+        with self.lock:
+            if key in self.cache:
+                self.cache.move_to_end(key)
+                return self.cache[key]
+            path = self.path(document_id, version)
+            saved = json.loads((path / "documents.json").read_text(encoding="utf-8"))
+            docs = {doc["id"]: Document(page_content=doc["page_content"], metadata=doc["metadata"], id=doc["id"])
+                    for doc in saved["documents"]}
+            store = FAISS(self.embeddings_factory(), faiss.read_index(str(path / "index.faiss")),
+                          InMemoryDocstore(docs), {int(key): value for key, value in saved["mapping"].items()})
+            self.remember(key, store)
+            return store
 
-def add_documents_to_collection(collection: str, docs) -> None:  # used by /ingest after splitting
-    """Embed and persist a list of LangChain Document objects."""  # chunks in, vectors on disk
-    existing = _load(collection)  # reuse index if this collection already has docs
-    if existing is None:  # first ingest into this collection — build the store from scratch.
-        store = FAISS.from_documents(docs, get_embeddings())  # embed + build a new index
-    else:  # later uploads append instead of replacing
-        existing.add_documents(docs)  # embed new chunks into the same index
-        store = existing  # keep the updated object to save
-    _save(store, collection)  # write to disk so /ask can find it later
+    def retrieve(self, document_id, version, question, k):
+        with self.lock:
+            store = self.load(document_id, version)
+            return store.similarity_search(question, k=k)
+
+    def delete(self, document_id):
+        with self.lock:
+            for key in list(self.cache):
+                if key[0] == document_id:
+                    del self.cache[key]
+            if re.fullmatch(r"[a-f0-9]{32}", document_id):
+                shutil.rmtree(self.root / document_id, ignore_errors=True)
+
+    def prune(self, document_id, current_version):
+        with self.lock:
+            parent = self.path(document_id, current_version).parent
+            for path in parent.iterdir():
+                if path.name != current_version:
+                    shutil.rmtree(path, ignore_errors=True)
+            for key in list(self.cache):
+                if key[0] == document_id and key[1] != current_version:
+                    del self.cache[key]

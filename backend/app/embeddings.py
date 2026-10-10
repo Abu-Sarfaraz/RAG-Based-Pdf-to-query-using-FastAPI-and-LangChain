@@ -1,11 +1,18 @@
-"""Local sentence-transformers embeddings — no API key needed."""  # vectors are built on this machine
-from langchain_huggingface import HuggingFaceEmbeddings  # LangChain wrapper around the local model
+"""One CPU embedding model per process, warmed during application lifespan."""
+from functools import lru_cache
+
+from .config import settings
 
 
-def get_embeddings() -> HuggingFaceEmbeddings:  # factory so FAISS load/save share the same embedder
-    # all-MiniLM-L6-v2: 384 dims, runs locally on CPU. Swap to
-    # sentence-transformers/all-mpnet-base-v2 (768 dims) if you need better
-    # quality and have the RAM — it'll push you over Render free tier though.
-    return HuggingFaceEmbeddings(  # create the embedder used for ingest and retrieve
-        model_name="sentence-transformers/all-MiniLM-L6-v2",  # small CPU model, 384-dim vectors
+@lru_cache(maxsize=1)
+def get_embeddings():
+    import torch
+    from langchain_huggingface import HuggingFaceEmbeddings
+
+    torch.set_num_threads(settings.embedding_threads)
+    return HuggingFaceEmbeddings(
+        model_name=settings.embedding_model,
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True, "batch_size": 32},
+        show_progress=False,
     )

@@ -1,0 +1,51 @@
+:root { --ink:#172033; --muted:#5e6c83; --accent:#4f46e5; --line:#e4e8f1; }
+.stApp { background:#f7f8fa; color:var(--ink); }
+[data-testid="stHeader"] { background:rgba(247,248,250,.92); }
+[data-testid="stAppDeployButton"] { display:none; }
+.block-container { padding-top:2.2rem; padding-bottom:6rem; max-width:1560px; }
+[data-testid="stSidebar"] { background:#fff; border-right:1px solid var(--line); }
+[data-testid="stSidebarContent"] { padding-top:1rem; }
+.brand { display:flex; align-items:center; gap:10px; font-size:25px; font-weight:750; letter-spacing:-1px; margin-bottom:12px; }
+.brand-icon { display:grid; place-items:center; width:34px; height:36px; border-radius:11px 11px 11px 3px; background:var(--accent); color:#fff; font-size:22px; font-weight:650; }
+.brand-dot { color:var(--accent); }
+.section-label,.eyebrow { font-size:10px; letter-spacing:1.8px; font-weight:750; color:#63718a; }
+.section-label { margin:28px 0 12px; }
+.source-title { margin:2px 0 14px; }
+.workspace-header { display:flex; align-items:center; justify-content:space-between; gap:20px; padding-bottom:24px; margin-bottom:26px; border-bottom:1px solid var(--line); }
+.workspace-header h2 { margin:7px 0 5px; font-size:22px; font-weight:650; letter-spacing:-.5px; overflow-wrap:anywhere; }
+.workspace-header p { margin:0; color:var(--muted); font-size:12px; }
+.ready-badge { white-space:nowrap; border:1px solid #cfe9df; border-radius:20px; background:#edf8f3; color:#247958; padding:5px 12px; font-size:11px; font-weight:600; }
+.empty-state { padding:45px 0 30px; }
+.empty-icon { display:grid; place-items:center; height:49px; width:49px; border:1px solid #e0ddff; color:var(--accent); background:#efedff; border-radius:15px; font-size:28px; margin-bottom:23px; }
+.empty-state h1 { font-size:clamp(35px,3.4vw,55px); font-weight:650; line-height:1.13; letter-spacing:-2px; padding:14px 0; }
+.empty-state h1 span { color:var(--accent); }
+.empty-state p { color:var(--muted); font-size:15px; line-height:1.7; }
+[data-testid="stChatMessage"] { background:#fff; border:1px solid var(--line); border-radius:16px; padding:20px; margin-bottom:16px; }
+[data-testid="stChatMessage"] p { line-height:1.7; }
+[data-testid="stChatMessage"] a { font-weight:650; color:var(--accent); text-decoration:none; }
+[data-testid="stChatMessage"] a:hover { text-decoration:underline; }
+[data-testid="stChatInput"] { border-radius:16px; border:1px solid #dadfec; box-shadow:0 4px 24px #1720330a; background:#fff; }
+[data-testid="stBottomBlockContainer"] { max-width:1560px; padding-top:12px; padding-bottom:20px; }
+[data-testid="stBottom"] > div { background:#f7f8fa; }
+[data-testid="stVerticalBlockBorderWrapper"] > div { border-color:var(--line); border-radius:14px; }
+.stButton button { border-color:var(--line); border-radius:9px; font-weight:500; }
+.stButton button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+[data-testid="stSidebar"] .stButton button { text-align:left; justify-content:flex-start; }
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] { padding:12px; background:#f7f8fc; border:1px dashed #cdd4e5; border-radius:10px; }
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] { font-size:12px; }
+.sidebar-footer { margin:25px 0 8px; font-size:10px; letter-spacing:1.4px; color:#66758b; line-height:2; }
+[data-testid="stCaptionContainer"] p { color:var(--muted); }
+.sidebar-footer span { font-size:11px; letter-spacing:0; }
+@media(max-width:768px) {
+  .block-container { padding:1.5rem 1rem 6rem; }
+  .workspace-header { margin-bottom:14px; padding-bottom:18px; }
+  .workspace-header h2 { font-size:18px; }
+  .empty-state { padding:24px 0; }
+  .empty-state h1 { font-size:39px; letter-spacing:-1.5px; }
+  [data-testid="stChatMessage"] { padding:14px; }
+  [data-testid="stHorizontalBlock"] { flex-wrap:wrap; }
+  [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width:min(100%,300px); }
+  [data-testid="stChatMessage"] [data-testid="stHorizontalBlock"] { flex-wrap:nowrap; }
+  [data-testid="stChatMessage"] [data-testid="stColumn"] { min-width:0!important; flex:1 1 0!important; }
+}
+@media(prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; transition:none!important; } }

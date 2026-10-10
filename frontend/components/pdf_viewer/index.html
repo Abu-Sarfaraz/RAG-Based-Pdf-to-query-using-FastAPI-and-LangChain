@@ -1,0 +1,54 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}body{margin:0;font:13px system-ui;background:#f3f5f9;color:#526078}.toolbar{display:flex;align-items:center;justify-content:center;gap:10px;padding:10px;background:#fff;border-bottom:1px solid #e3e7ef;position:sticky;top:0;z-index:2}.toolbar button{background:#fff;border:1px solid #d9dfeb;border-radius:7px;padding:5px 11px;cursor:pointer;color:#26334b}.toolbar input{width:54px;padding:5px;border:1px solid #d9dfeb;border-radius:6px;text-align:center}button:focus-visible,input:focus-visible{outline:2px solid #4f46e5}#viewport{padding:14px;overflow:auto;height:540px;text-align:center}canvas{background:white;box-shadow:0 3px 16px #23344b14;max-width:100%}#error{padding:18px;color:#9d3a3a}#loading{padding:20px;color:#526078}.toolbar button:disabled{opacity:.4;cursor:default}
+</style></head><body>
+<div class="toolbar"><button id="previous" aria-label="Previous page">←</button><label for="page">Page</label><input id="page" type="number" min="1" value="1" aria-label="PDF page"><span id="total"></span><button id="next" aria-label="Next page">→</button></div>
+<div id="viewport"><div id="loading">Opening your PDF…</div><canvas id="canvas" hidden></canvas><div id="error" role="alert" hidden></div></div>
+<script type="module">
+import * as pdfjs from './vendor/pdf.mjs';
+pdfjs.GlobalWorkerOptions.workerSrc=new URL('./vendor/pdf.worker.mjs',import.meta.url).href;
+const send=(type,extra={})=>parent.postMessage({isStreamlitMessage:true,type,...extra},'*');
+let pdf=null,documentId=null,currentPage=1,lastRequested=null,task=null,renderNumber=0,revision=0;
+async function renderPage(number,notify=false){
+  if(!pdf)return;
+  currentPage=Math.max(1,Math.min(pdf.numPages,Number(number)||1));
+  if(notify)send('streamlit:setComponentValue',{value:{page:currentPage,revision:++revision}});
+  const thisRender=++renderNumber;
+  if(task){try{task.cancel();}catch(_){} task=null;}
+  const page=await pdf.getPage(currentPage);
+  if(thisRender!==renderNumber)return;
+  const viewport=page.getViewport({scale:1});
+  const width=Math.max(220,document.querySelector('#viewport').clientWidth-28);
+  const scaled=page.getViewport({scale:width/viewport.width});
+  const ratio=Math.min(devicePixelRatio||1,2),canvas=document.querySelector('#canvas');
+  canvas.width=Math.floor(scaled.width*ratio);canvas.height=Math.floor(scaled.height*ratio);
+  canvas.style.width=scaled.width+'px';canvas.style.height=scaled.height+'px';canvas.hidden=false;
+  document.querySelector('#loading').hidden=true;
+  task=page.render({canvasContext:canvas.getContext('2d'),viewport:scaled,transform:[ratio,0,0,ratio,0,0]});
+  try{await task.promise;}catch(error){if(error.name!=='RenderingCancelledException')throw error;}
+  if(thisRender!==renderNumber)return;
+  document.querySelector('#page').value=currentPage;document.querySelector('#page').max=pdf.numPages;
+  document.querySelector('#total').textContent='of '+pdf.numPages;
+  document.querySelector('#previous').disabled=currentPage===1;
+  document.querySelector('#next').disabled=currentPage===pdf.numPages;
+}
+async function renderArgs(args){
+  document.querySelector('#viewport').style.height=(args.height||540)+'px';
+  send('streamlit:setFrameHeight',{height:(args.height||540)+48});
+  if(documentId!==args.document_id){
+    const bytes=Uint8Array.from(atob(args.data),character=>character.charCodeAt(0));
+    pdf=await pdfjs.getDocument({data:bytes,standardFontDataUrl:new URL('./vendor/standard_fonts/',import.meta.url).href,isEvalSupported:false}).promise;
+    documentId=args.document_id;lastRequested=null;
+  }
+  if(lastRequested!==args.request_id){lastRequested=args.request_id;await renderPage(args.page||1,true);}
+}
+let renderQueue=Promise.resolve();
+addEventListener('message',event=>{
+  if(event.source!==parent||event.data.type!=='streamlit:render')return;
+  renderQueue=renderQueue.then(()=>renderArgs(event.data.args)).catch(error=>{document.querySelector('#loading').hidden=true;const panel=document.querySelector('#error');panel.hidden=false;panel.textContent='Preview unavailable. Use Download PDF to open the original.';console.error(error);});
+});
+document.querySelector('#previous').onclick=()=>renderPage(currentPage-1,true);
+document.querySelector('#next').onclick=()=>renderPage(currentPage+1,true);
+document.querySelector('#page').onchange=event=>renderPage(event.target.value,true);
+let resizeTimer;new ResizeObserver(()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>renderPage(currentPage),120);}).observe(document.querySelector('#viewport'));
+send('streamlit:componentReady',{apiVersion:1});
+</script></body></html>

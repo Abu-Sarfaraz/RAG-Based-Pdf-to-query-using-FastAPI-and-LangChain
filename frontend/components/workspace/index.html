@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body>
+<script>
+const send=(type,extra={})=>parent.postMessage({isStreamlitMessage:true,type,...extra},'*');
+let delivered=false,lastMobile=null,state=null;
+function report(){
+  if(!state)return;
+  let mobile=false;
+  try{mobile=parent.innerWidth<=768;}catch(_){mobile=screen.width<=768;}
+  if(!delivered||lastMobile!==mobile){send('streamlit:setComponentValue',{value:{...state,mobile}});delivered=true;lastMobile=mobile;}
+}
+addEventListener('message',event=>{
+  if(event.source!==parent || event.data.type!=='streamlit:render')return;
+  const args=event.data.args;
+  let token='',persistent=true;
+  try {
+    if(args.token!==null && args.token!==undefined)localStorage.setItem(args.storage_key,args.token);
+    token=localStorage.getItem(args.storage_key)||'';
+  } catch (_) {persistent=false; token=args.token||'';}
+  state={ready:true,token,persistent};report();
+  send('streamlit:setFrameHeight',{height:0});
+});
+try{parent.addEventListener('resize',report);}catch(_){}
+send('streamlit:componentReady',{apiVersion:1});
+</script></body></html>

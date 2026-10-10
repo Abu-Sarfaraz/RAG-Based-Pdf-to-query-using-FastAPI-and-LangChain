@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;font:13px system-ui;color:#526078}button{border:1px solid #e3e7ef;border-radius:8px;padding:6px 11px;color:inherit;background:white;cursor:pointer}button:hover{border-color:#4f46e5;color:#4f46e5}button:focus-visible{outline:2px solid #4f46e5;outline-offset:2px}
+</style></head><body><button id="copy" aria-label="Copy answer">Copy answer</button><script>
+let text='';const send=(type,extra={})=>parent.postMessage({isStreamlitMessage:true,type,...extra},'*');
+const fit=()=>send('streamlit:setFrameHeight',{height:document.querySelector('#copy').offsetHeight+6});
+addEventListener('message',event=>{if(event.source===parent&&event.data.type==='streamlit:render'){text=event.data.args.text;fit();}});
+new ResizeObserver(fit).observe(document.querySelector('#copy'));
+document.querySelector('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(text);document.querySelector('#copy').textContent='Copied';}catch(_){const field=document.createElement('textarea');field.value=text;document.body.append(field);field.select();document.execCommand('copy');field.remove();document.querySelector('#copy').textContent='Copied';}};
+send('streamlit:componentReady',{apiVersion:1});
+</script></body></html>

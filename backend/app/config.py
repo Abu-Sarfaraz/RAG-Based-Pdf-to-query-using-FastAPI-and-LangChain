@@ -1,29 +1,47 @@
-"""Configuration loaded from environment variables."""  # one place for secrets and model names
-from json import load
-import os  # read CHAT_API_KEY / LLM_MODEL from the process environment
-from dataclasses import dataclass  # freeze settings so they can't change at runtime
-from pathlib import Path  # build the path to the project-root .env file
+"""Configuration; deployment environment takes precedence over .env."""
+from dataclasses import dataclass
+from functools import lru_cache
+import hashlib
+import os
+from pathlib import Path
 
-from dotenv import load_dotenv  # pull key=value pairs from .env into os.environ
+from dotenv import load_dotenv
 
-# backend/app/config.py → project root (two levels up)
-load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)  # load .env even in uvicorn reload workers
-
-
-@dataclass(frozen=True)  # immutable settings object
-class Settings:  # typed container for values the rest of the app needs
-    chat_api_key: str  # Groq key used by ChatGroq
-    llm_model: str  # which Groq model to call
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 
-def get_settings() -> Settings:  # build Settings from env, fail fast if the key is missing
-    chat_api_key = os.environ["CHAT_API_KEY"]  # required; KeyError if unset
-    # ChatGroq also reads GROQ_API_KEY; keep them in sync.
-    os.environ.setdefault("GROQ_API_KEY", chat_api_key)  # Groq SDK looks for this name
-    return Settings(  # pack both values for callers
-        chat_api_key=chat_api_key,  # pass the Groq key through
-        llm_model=os.environ.get("LLM_MODEL", "openai/gpt-oss-20b"),  # allow override, keep a default
+@dataclass(frozen=True)
+class Settings:
+    data_dir: Path
+    chat_api_key: str
+    llm_model: str
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    max_upload_mb: int = 25
+    max_pages: int = 300
+    chunk_tokens: int = 220
+    chunk_overlap: int = 32
+    index_cache_size: int = 4
+    embedding_threads: int = 2
+    answer_timeout: int = 90
+
+    @property
+    def pipeline_version(self) -> str:
+        value = f"v2:{self.embedding_model}:{self.chunk_tokens}:{self.chunk_overlap}"
+        return hashlib.sha256(value.encode()).hexdigest()[:16]
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings(
+        data_dir=Path(os.getenv("DATA_DIR", str(PROJECT_ROOT / ".data"))).resolve(),
+        chat_api_key=os.getenv("CHAT_API_KEY") or os.getenv("GROQ_API_KEY", ""),
+        llm_model=os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"),
+        embedding_model=os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
+        max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "25")),
+        max_pages=int(os.getenv("MAX_PDF_PAGES", "300")),
+        embedding_threads=int(os.getenv("EMBEDDING_THREADS", "2")),
     )
 
 
-settings = get_settings()  # load once at import so rag_chain can use it immediately
+settings = get_settings()

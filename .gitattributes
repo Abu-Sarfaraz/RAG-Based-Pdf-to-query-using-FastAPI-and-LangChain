@@ -1,0 +1,2 @@
+# Preserve official PDF.js distribution files and exclude vendored code from review noise.
+frontend/components/pdf_viewer/vendor/** linguist-vendored=true -whitespace

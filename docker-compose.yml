@@ -1,29 +1,30 @@
 services:
   backend:
     build: ./backend
-    container_name: rag-backend
-    env_file:
-      - .env
+    env_file: .env
     environment:
-      - PORT=8000
+      DATA_DIR: /data
+      HF_HUB_OFFLINE: "1"
     ports:
       - "8000:8000"
+    volumes:
+      - papertrail-data:/data
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 5s
-      retries: 3
+      start_period: 90s
+      retries: 5
     restart: unless-stopped
-
   frontend:
     build: ./frontend
-    container_name: rag-frontend
     environment:
-      - BACKEND_URL=http://backend:8000
-      - PORT=8501
+      BACKEND_URL: http://backend:8000
     ports:
       - "8501:8501"
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
+volumes:
+  papertrail-data:

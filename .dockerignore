@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+!.env.example
+**/.venv
+**/__pycache__
+.data
+**/.faiss_index
+**/.agents
+**/.claude

@@ -1,26 +1,33 @@
+# Deploy through Docker so the preloaded CPU embedding model is included.
+# The paid backend and disk keep documents/chat history across restarts.
 services:
   - type: web
-    name: rag-backend
-    runtime: python
-    plan: free           # FAISS is in-memory + tiny model fits on free tier
+    name: papertrail-backend
+    runtime: docker
     rootDir: backend
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
+    plan: standard
+    healthCheckPath: /health
+    disk:
+      name: papertrail-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: CHAT_API_KEY
-        sync: false      # paste your Groq key manually
+        sync: false
       - key: LLM_MODEL
         value: llama-3.3-70b-versatile
-      - key: FAISS_INDEX_DIR
-        value: ./.faiss_index
-
+      - key: DATA_DIR
+        value: /data
+      - key: HF_HUB_OFFLINE
+        value: "1"
   - type: web
-    name: rag-frontend
-    runtime: python
-    plan: free
+    name: papertrail-frontend
+    runtime: docker
     rootDir: frontend
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /_stcore/health
     envVars:
       - key: BACKEND_URL
-        value: https://rag-backend.onrender.com   # update after first backend deploy
+        sync: false
