@@ -7,4 +7,4 @@ COPY app.py api.py styles.css ./
 COPY components ./components
 COPY .streamlit ./.streamlit
 EXPOSE 8501
-CMD ["sh", "-c", "streamlit run app.py --server.port ${PORT:-8501} --server.address 0.0.0.0 --server.headless true"]
+CMD ["sh", "-c", "exec streamlit run app.py --server.port ${PORT:-8501} --server.address 0.0.0.0 --server.headless true"]

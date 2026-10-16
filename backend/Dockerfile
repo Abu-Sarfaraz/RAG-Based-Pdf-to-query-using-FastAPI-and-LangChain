@@ -8,4 +8,4 @@ COPY app ./app
 RUN python -c "from app.embeddings import get_embeddings; get_embeddings()"
 ENV HF_HUB_OFFLINE=1
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

@@ -9,7 +9,7 @@ import re
 import tempfile
 import uuid
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from filelock import FileLock, Timeout
@@ -22,6 +22,7 @@ from .config import Settings, settings
 from .db import IndexStore
 from .embeddings import get_embeddings
 from .ingestion import IngestionWorker
+from .middleware import UploadBodyLimitMiddleware, bearer_token
 from .rag_chain import stream_answer
 
 logger = logging.getLogger(__name__)
@@ -51,9 +52,10 @@ def public_document(document):
 
 
 def workspace(request: Request, authorization: str | None = Header(default=None)):
-    if not authorization or not authorization.startswith("Bearer ") or len(authorization) > 200:
+    token = bearer_token(authorization)
+    if token is None:
         raise HTTPException(401, "Restore or create a workspace to continue.")
-    owner = request.app.state.catalog.authenticate(authorization[7:])
+    owner = request.app.state.catalog.authenticate(token)
     if owner is None:
         raise HTTPException(401, "This workspace could not be restored.")
     return owner
@@ -141,6 +143,7 @@ def create_app(configuration: Settings | None = None, *, embeddings_factory=get_
 
     application = FastAPI(title="Papertrail — PDF chat", version="2.0.0", lifespan=lifespan)
     origins = [value.strip() for value in os.getenv("ALLOWED_ORIGINS", "http://localhost:8501").split(",") if value.strip()]
+    application.add_middleware(UploadBodyLimitMiddleware)
     application.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST", "DELETE"],
                                allow_headers=["Authorization", "Content-Type"])
 
@@ -179,7 +182,8 @@ def create_app(configuration: Settings | None = None, *, embeddings_factory=get_
             document, created = await run_in_threadpool(catalog.register_document, owner, digest,
                                                         config.pipeline_version, filename, size)
             original = config.data_dir / "uploads" / (document["id"] + ".pdf")
-            if created or not original.exists():
+            needs_preparation = created or not original.exists() or document.get("status") in ("failed", "uploading")
+            if needs_preparation:
                 path.replace(original)
                 catalog.update_document(document["id"], status="queued", error=None)
                 request.app.state.worker.notify()
@@ -224,8 +228,11 @@ def create_app(configuration: Settings | None = None, *, embeddings_factory=get_
         return {"deleted": True}
 
     @application.get("/conversations")
-    def list_conversations(request: Request, owner=Depends(workspace)):
-        return request.app.state.catalog.conversations(owner)
+    def list_conversations(request: Request, owner=Depends(workspace),
+                           limit: int = Query(default=40, ge=1, le=100),
+                           offset: int = Query(default=0, ge=0),
+                           search: str = Query(default="", max_length=200)):
+        return request.app.state.catalog.conversations(owner, limit=limit, offset=offset, search=search)
 
     @application.post("/conversations", status_code=201)
     def create_conversation(payload: ConversationRequest, request: Request, owner=Depends(workspace)):
@@ -246,13 +253,21 @@ def create_app(configuration: Settings | None = None, *, embeddings_factory=get_
         if document["status"] != "ready":
             raise HTTPException(409, "Your PDF is still being prepared.")
         catalog = request.app.state.catalog
-        history = catalog.messages(conversation_id)
+        if not catalog.acquire_conversation(conversation_id, payload.request_id):
+            raise HTTPException(409, "An answer is already being written in this conversation.")
+        try:
+            history = catalog.messages(conversation_id)
+        except BaseException:
+            catalog.release_conversation(conversation_id, payload.request_id)
+            raise
         original_question = next((message for message in history if message["request_id"] == payload.request_id and message["role"] == "user"), None)
         if original_question and original_question["content"] != payload.question:
+            catalog.release_conversation(conversation_id, payload.request_id)
             raise HTTPException(409, "This submission ID was already used for another question.")
         previous = next((message for message in history if message["request_id"] == payload.request_id
                          and message["role"] == "assistant" and message["status"] == "complete"), None)
         if previous:
+            catalog.release_conversation(conversation_id, payload.request_id)
             def replay():
                 yield {"event": "sources", "sources": previous["sources"]}
                 yield {"event": "token", "text": previous["content"]}
@@ -260,8 +275,6 @@ def create_app(configuration: Settings | None = None, *, embeddings_factory=get_
             iterator = replay()
             background = None
         else:
-            if not catalog.acquire_conversation(conversation_id, payload.request_id):
-                raise HTTPException(409, "An answer is already being written in this conversation.")
             history = [message for message in history if message["request_id"] != payload.request_id]
             def generate():
                 partial, sources, completed = "", [], False
@@ -284,11 +297,13 @@ def create_app(configuration: Settings | None = None, *, embeddings_factory=get_
                                          sources=sources, metrics={"error": message}, status="failed")
                     yield {"event": "error", "message": message}
                 finally:
-                    if not completed and not any(item["role"] == "assistant" and item["request_id"] == payload.request_id
-                                                 for item in catalog.messages(conversation_id)):
-                        catalog.save_message(conversation_id, payload.request_id, "assistant", partial or "Answer interrupted. Please retry.",
-                                             sources=sources, metrics={"error": "Answer interrupted. Please retry."}, status="failed")
-                    catalog.release_conversation(conversation_id, payload.request_id)
+                    try:
+                        if not completed and not any(item["role"] == "assistant" and item["request_id"] == payload.request_id
+                                                     for item in catalog.messages(conversation_id)):
+                            catalog.save_message(conversation_id, payload.request_id, "assistant", partial or "Answer interrupted. Please retry.",
+                                                 sources=sources, metrics={"error": "Answer interrupted. Please retry."}, status="failed")
+                    finally:
+                        catalog.release_conversation(conversation_id, payload.request_id)
             iterator = generate()
             background = BackgroundTask(catalog.release_conversation, conversation_id, payload.request_id)
         def sse():

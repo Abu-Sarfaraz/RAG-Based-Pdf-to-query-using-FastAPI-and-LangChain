@@ -1,5 +1,32 @@
 # Papertrail issue review
 
+## Resolution update — 17 October 2026
+
+The eight numbered issues below were the original audit findings. A ninth provider-citation issue was reproduced during this repair pass. Their code fixes are now included, with new regression checks rather than relying only on the original passing suite. Historical line numbers in the original findings refer to commit `db5f27e` and may differ from current files.
+
+| Finding | Correction | Regression evidence |
+| --- | --- | --- |
+| 1. Late upload protection | ASGI middleware authenticates before reading and limits actual body bytes for declared, chunked and inaccurate lengths; CORS wraps rejection responses. Multipart error cleanup closes partial files. | `test_regressions.py`: no-body unauthorized/oversized rejections, forged/missing lengths, observed parser writes, disconnect cleanup and CORS. |
+| 2. Frozen stale retries | Context switches clear pending/error/retry state. A mismatched pending document is cleared with a rerun; source queries are cleared on ordinary context changes. | `frontend/tests/test_state.py`: context switch and mismatched pending-state scenarios. |
+| 3. Preparation blocks answers | Embedding and serialization occur outside the global cache lock; publication/cache mutations remain protected. Retrieval retains the loaded store while searching outside the lock. | A ready PDF answers while another PDF's embedding is deliberately paused. |
+| 4. Request-ID race | Acquire the conversation before reading history; replay and conflict paths release it. History-read errors and interrupted-record cleanup also release the lock. | Interleaved duplicate/conflicting submissions, saved-question integrity, one model call and read-failure recovery. |
+| 5. Wrong citation excerpt | Inline links contain message and source IDs. Resolution matches that answer, source and page; incoming deep links preserve query parameters. | Same-page/reused-source state checks and browser assertions against the citation's destination tab. |
+| 6. Old chats inaccessible | Fetch explicitly requested authorized chats independently of recent history; add bounded API pagination/search and a saved-history browser. | 42 conversations, offset/search/isolation checks, and UI deep-link restoration outside the overview. |
+| 7. Container shutdown signals | Both shell commands use `exec` and retain `PORT` expansion. | See `VALIDATION.md` for the container-command smoke-test scope. |
+| 8. Reupload stays failed | Recover saved interrupted uploads and requeue failed/missing-original uploads on explicit reupload; frontend uploads reach backend deduplication. | Restart with/without originals, failed reupload, and frontend cached-reupload checks. |
+
+### 9. Provider citation brackets did not match the API/UI format
+
+A live run on 17 October with `openai/gpt-oss-20b` returned supported facts with Unicode references such as `【1】`. The validator recognized only `[1]`, so `cited_source_ids` and cited-page evaluation were empty, and inline citations did not become links. The first live evaluation passed only 1/7 checks.
+
+The backend now normalizes ASCII/Unicode numeric citations to canonical `[id]` references while removing unknown IDs. The frontend also links Unicode references in older saved answers. The evidence prompt explicitly requests ASCII references and disallows unstated interpretations. New unit/API checks cover normalization, rejected IDs and saved streamed answers. After the correction, the same live evaluation passed 7/7. Citation identity checks do not prove semantic support for every generated statement.
+
+Additional fixes include rejecting malformed/very long upload lengths without integer-conversion errors, returning the exact requested citation instead of an unrelated fallback, opening mobile PDF panels for citation links, correcting the popup coverage gap in `browser_check.py`, and refreshing the recording guide for the current API. A ready-to-enable GitHub Actions template is included under `docs/ci-regressions.yml.example`; activation requires permission to publish workflow files.
+
+The original audit's public-deployment concern remains an explicit architecture limitation: open workspace creation and total-storage/provider-usage quotas need admission controls at the hosting boundary. This change does not introduce a public account/billing system. See the README's hosting guidance and the current [validation report](VALIDATION.md).
+
+## Original audit — 11 October 2026
+
 Reviewed on 11 October 2026. Repository commit: `db5f27ebece391f32abe902729ecb7720ff8132e`.
 
 Eight actionable issues were reproduced. The existing regression checks pass but do not cover these triggers. This was a review; no project code was changed or pushed.

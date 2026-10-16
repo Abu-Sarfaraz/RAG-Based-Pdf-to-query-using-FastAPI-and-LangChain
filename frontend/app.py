@@ -24,19 +24,24 @@ st.set_page_config(page_title="Papertrail · Answers in your documents", page_ic
 st.html("<style>" + (ROOT / "styles.css").read_text() + "</style>")
 
 
-def activate(document_id, conversation_id=None):
+def activate(document_id, conversation_id=None, *, preserve_source_query=False):
     st.session_state.active_document = document_id
     st.session_state.active_conversation = conversation_id
     st.session_state.switch_document_to = document_id
     st.session_state.source_page = 1
     st.session_state.source_request = st.session_state.get("source_request", 0) + 1
     st.session_state.pop("last_page_query", None)
+    st.session_state.pop("last_source_query", None)
     st.session_state.selected_source = None
+    # Pending, error and retry state belong to the previous context.
+    st.session_state.pending_question = None
+    st.session_state.pop("stream_error", None)
+    st.session_state.pop("retry_payload", None)
     st.session_state.composer_epoch = st.session_state.get("composer_epoch", 0) + 1
+    if not preserve_source_query:
+        st.query_params.clear()
     if conversation_id:
         st.query_params["chat"] = conversation_id
-    else:
-        st.query_params.clear()
 
 
 def choose_source(source):
@@ -64,23 +69,25 @@ def upload(api, file):
     data = file.getvalue()
     digest = hashlib.sha256(data).hexdigest()
     known = st.session_state.setdefault("uploaded_files", {})
-    if digest not in known:
-        with st.spinner("Saving your PDF…"):
-            document = api.upload(file.name, data)
-        known[digest] = document["id"]
+    with st.spinner("Saving your PDF…"):
+        document = api.upload(file.name, data)
+    known[digest] = document["id"]
     if known[digest] != st.session_state.active_document:
         activate(known[digest])
     return known[digest]
 
 
-def linked_answer(answer, sources, conversation_id):
+def linked_answer(answer, sources, conversation_id, message_id=None):
     source_map = {source["id"]: source for source in sources}
     def link(match):
-        source = source_map.get(int(match[1]))
+        source = source_map.get(int(match[1] or match[2]))
         if source is None:
             return match.group()
-        return f"[{match.group()}](?chat={conversation_id}&page={source['page']}&citation={source['id']})"
-    return re.sub(r"\[(\d+)\]", link, answer)
+        target = f"?chat={conversation_id}&page={source['page']}&citation={source['id']}"
+        if message_id is not None:
+            target += f"&message={message_id}"
+        return f"[[{source['id']}]]({target})"
+    return re.sub(r"\[([0-9]+)\]|【([0-9]+)】", link, answer)
 
 
 def initialize():
@@ -103,6 +110,8 @@ def initialize():
         st.session_state.token = browser.get("token") or API(BACKEND_URL).json("POST", "/workspaces")["token"]
         st.rerun()
     st.session_state.mobile_view = browser.get("mobile", False)
+    if st.query_params.get("citation") or st.query_params.get("page"):
+        st.session_state.mobile_pdf_expanded = True
     api = API(BACKEND_URL, st.session_state.token)
     overview = api.json("GET", "/workspace")
     documents = overview["documents"]
@@ -110,8 +119,13 @@ def initialize():
     requested_chat = st.query_params.get("chat")
     if requested_chat and requested_chat != st.session_state.active_conversation:
         chat = next((chat for chat in conversations if chat["id"] == requested_chat), None)
+        if chat is None:
+            try:
+                chat = api.json("GET", f"/conversations/{requested_chat}")
+            except APIError:
+                chat = None
         if chat:
-            activate(chat["document_id"], chat["id"])
+            activate(chat["document_id"], chat["id"], preserve_source_query=True)
     if not st.session_state.active_document and documents:
         latest_chat = next((chat for chat in conversations if chat["document_id"] == documents[0]["id"]), None)
         activate(documents[0]["id"], latest_chat["id"] if latest_chat else None)
@@ -133,10 +147,9 @@ def sidebar(api, overview, documents, conversations):
         added = st.file_uploader("Add a PDF", type=["pdf"], key=f"sidebar-upload-{st.session_state.uploader_epoch}", disabled=waiting,
                                  help=f"Searchable PDFs, up to {overview['max_upload_mb']} MB.")
         if added is not None:
-            digest = hashlib.sha256(added.getvalue()).hexdigest()
-            if digest not in st.session_state.uploaded_files:
-                upload(api, added)
-                st.rerun()
+            upload(api, added)
+            st.session_state.uploader_epoch += 1
+            st.rerun()
         if documents:
             ids = [doc["id"] for doc in documents]
             by_id = {doc["id"]: doc for doc in documents}
@@ -173,6 +186,21 @@ def sidebar(api, overview, documents, conversations):
                          disabled=waiting, help=chat["filename"]):
                 activate(chat["document_id"], chat["id"])
                 st.rerun()
+        with st.expander("All saved conversations"):
+            def reset_history_page():
+                st.session_state.history_page = 1
+            search = st.text_input("Search titles or filenames", key="history_search",
+                                   max_chars=200, on_change=reset_history_page)
+            page = st.number_input("History page", min_value=1, step=1, key="history_page")
+            saved = api.json("GET", "/conversations", params={"limit": 20, "offset": (page - 1) * 20,
+                                                            "search": search})
+            if not saved:
+                st.caption("No conversations on this page.")
+            for chat in saved:
+                if st.button(chat["title"], key="saved-chat-" + chat["id"], use_container_width=True,
+                             disabled=waiting, help=chat["filename"]):
+                    activate(chat["document_id"], chat["id"])
+                    st.rerun()
         st.divider()
         def toggle_pdf():
             st.session_state.show_pdf = st.session_state.pdf_panel_toggle
@@ -237,7 +265,7 @@ def render_history(messages, conversation_id):
             last_user = message["content"]
         avatar = ":material/person:" if message["role"] == "user" else ":material/auto_stories:"
         with st.chat_message(message["role"], avatar=avatar):
-            st.markdown(linked_answer(message["content"], message.get("sources", []), conversation_id))
+            st.markdown(linked_answer(message["content"], message.get("sources", []), conversation_id, message.get("id")))
             if message["role"] == "assistant":
                 if message["status"] == "failed":
                     st.error(message.get("metrics", {}).get("error", "Answer interrupted. Please retry."))
@@ -264,16 +292,26 @@ def sources_panel(api, document, messages):
             available = [source for message in reversed(messages) for source in message.get("sources", [])]
             selected = available[0] if available else None
         page_query = st.query_params.get("page")
-        if page_query and st.session_state.get("last_page_query") != page_query:
+        citation_query = st.query_params.get("citation")
+        message_query = st.query_params.get("message")
+        trigger = page_query or citation_query or message_query
+        source_query = f"{message_query or ''}:{citation_query or ''}:{page_query or ''}"
+        if trigger and st.session_state.get("last_source_query") != source_query:
             try:
-                page = int(page_query)
-                st.session_state.source_page = max(1, min(document["pages"] or 1, page))
+                page = int(page_query) if page_query else None
+                citation_id = int(citation_query) if citation_query else None
+                if page is not None:
+                    st.session_state.source_page = max(1, min(document["pages"] or 1, page))
                 st.session_state.source_request += 1
                 st.session_state.last_page_query = page_query
-                selected = next((source for message in reversed(messages) for source in message.get("sources", [])
-                                 if source["page"] == page), selected)
+                st.session_state.last_source_query = source_query
+                candidate_messages = [message for message in reversed(messages)
+                                     if message_query is None or str(message.get("id")) == str(message_query)]
+                selected = next((source for message in candidate_messages for source in message.get("sources", [])
+                                 if (citation_id is None or source["id"] == citation_id)
+                                 and (page is None or source["page"] == page)), None)
                 st.session_state.selected_source = selected
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
         data = original_pdf(BACKEND_URL, st.session_state.token, document["id"])
         value = pdf_viewer(data=base64.b64encode(data).decode(), document_id=document["id"],
@@ -294,7 +332,17 @@ def sources_panel(api, document, messages):
 
 def send_pending(api, document, messages):
     pending = st.session_state.pending_question
-    if not pending or document is None or document["id"] != pending["document_id"] or document["status"] != "ready":
+    if not pending:
+        return
+    if document is None or document["id"] != pending["document_id"]:
+        # A pending question for another document must not leave this UI
+        # permanently disabled; drop the stale state or reactivate its context.
+        st.session_state.pending_question = None
+        st.session_state.pop("stream_error", None)
+        st.session_state.pop("retry_payload", None)
+        st.rerun()
+        return
+    if document["status"] != "ready":
         return
     conversation_id = st.session_state.active_conversation
     if not conversation_id:

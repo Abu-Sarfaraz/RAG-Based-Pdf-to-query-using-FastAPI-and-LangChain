@@ -136,7 +136,17 @@ class Catalog:
                 connection.execute("UPDATE documents SET status='queued',pipeline_version=?,error=NULL WHERE pipeline_version<>? AND status<>'uploading'",
                                    (pipeline_version, pipeline_version))
             connection.execute("UPDATE documents SET status='queued' WHERE status IN ('reading','preparing')")
-            connection.execute("UPDATE documents SET status='failed', error='Upload interrupted. Please upload the PDF again.' WHERE status='uploading'")
+            # A crash can leave an "uploading" row after the original PDF has
+            # already been persisted. Requeue those rows; keep incomplete uploads
+            # failed so their recovery action stays accurate.
+            for row in connection.execute("SELECT id FROM documents WHERE status='uploading'").fetchall():
+                original = self.path.parent / "uploads" / (row["id"] + ".pdf")
+                if original.exists():
+                    connection.execute("UPDATE documents SET status='queued', pipeline_version=COALESCE(?,pipeline_version), error=NULL, updated_at=? WHERE id=?",
+                                       (pipeline_version, time.time(), row["id"]))
+                else:
+                    connection.execute("UPDATE documents SET status='failed', error='Upload interrupted. Please upload the PDF again.', updated_at=? WHERE id=?",
+                                       (time.time(), row["id"]))
             interrupted = connection.execute("SELECT id,active_request FROM conversations WHERE active_request IS NOT NULL").fetchall()
             for conversation in interrupted:
                 user = connection.execute("SELECT 1 FROM messages WHERE conversation_id=? AND request_id=? AND role='user'", tuple(conversation)).fetchone()
@@ -169,10 +179,11 @@ class Catalog:
             return self.row(connection.execute("SELECT * FROM conversations WHERE id=? AND workspace_id=?",
                                                (conversation_id, owner)).fetchone())
 
-    def conversations(self, owner):
+    def conversations(self, owner, *, limit=40, offset=0, search=""):
         with self.connect() as connection:
             return [self.row(row) for row in connection.execute("""SELECT c.*, d.filename FROM conversations c
-                JOIN documents d ON d.id=c.document_id WHERE c.workspace_id=? ORDER BY c.updated_at DESC LIMIT 40""", (owner,))]
+                JOIN documents d ON d.id=c.document_id WHERE c.workspace_id=? AND (instr(lower(c.title),lower(?))>0 OR instr(lower(d.filename),lower(?))>0)
+                ORDER BY c.updated_at DESC, c.id DESC LIMIT ? OFFSET ?""", (owner, search, search, limit, offset))]
 
     def messages(self, conversation_id):
         with self.connect() as connection:

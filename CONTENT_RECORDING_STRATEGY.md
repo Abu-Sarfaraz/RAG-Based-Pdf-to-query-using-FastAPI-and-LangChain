@@ -1,183 +1,56 @@
-# Content Recording Strategy
+# Recording the current Papertrail application
 
-This document defines the correct order for recording the Rag Pdf Qa project, from the first file to the last, so the project is built completely and logically.
+This guide follows the workspace-based API and streaming chat implementation. The old collection-name form and `/ask` endpoint have been replaced.
 
-## Goal
+## Prepare a reproducible demo
 
-Record the project step by step, file by file, in a build-along style where viewers code along with you. This is intended for beginners following the CampusX LangChain playlist.
+1. Use Python 3.12 and complete `python3.12 setup_backend.py --install-only`.
+2. Configure the root `.env` privately. Keep provider keys, workspace recovery codes and personal documents out of recordings.
+3. Use a small searchable PDF with facts on two different pages. `backend/tests/helpers.py` can generate synthetic fixtures for demonstrations.
+4. Start the application with `python3.12 setup_backend.py`, then open `http://localhost:8501` and `http://localhost:8000/docs`.
+5. For a deterministic demonstration without provider calls, use `tests.browser_server:app` and the frontend test-server commands in the README. Explain clearly that the responses are fake test fixtures.
 
-## Pre-Recording Setup
+## Suggested build-along order
 
-Before recording:
+| Order | File or area | Explain |
+| --- | --- | --- |
+| 1 | `.env.example`, `backend/app/config.py` | Environment precedence, model selection, persistent data and pipeline identity. |
+| 2 | `backend/app/catalog.py` | Token hashes, workspace ownership, durable documents, conversation messages and request locks. |
+| 3 | `backend/app/embeddings.py` | One warmed local CPU embedding model. |
+| 4 | `backend/app/db.py` | FAISS, JSON metadata, atomic version publication and the bounded cache. Explain why long builds run outside the cache lock. |
+| 5 | `backend/app/ingestion.py` | PDF validation, physical pages, token chunks, the background worker and restart recovery. |
+| 6 | `backend/app/rag_chain.py` | Follow-up rewriting, a single retrieval, evidence-only prompting, token streaming and numbered source validation. |
+| 7 | `backend/app/middleware.py` | Authenticate before parsing uploads; count actual bytes even with missing or inaccurate length headers. |
+| 8 | `backend/app/main.py` | Lifespan, one backend per directory, upload endpoints, authorized originals and SSE message generation. |
+| 9 | `frontend/api.py` | Authenticated HTTP requests, API errors and SSE consumption. |
+| 10 | `frontend/components/` | Browser workspace memory, copy action and the locally served PDF.js viewer. |
+| 11 | `frontend/app.py`, `frontend/styles.css` | Combined attachment/question, waiting state, history search/pagination, citations, recovery, retry and export. |
+| 12 | Tests and scripts | Deterministic fixtures, concurrent-request checks, actual multipart write observations, desktop/mobile checks and optional live evaluation. |
+| 13 | Requirements, Dockerfiles, Compose, Render | Separate environments, CPU model preload, persistent storage and `exec` for shutdown signals. |
+| 14 | `setup_backend.py`, `README.md`, validation notes | One-command launch, troubleshooting and the limits of the verification performed. |
 
-1. Sanitize the .env file by replacing the real CHAT_API_KEY with a placeholder such as gsk_DEMO_KEY_REPLACE_ME. The real key must not appear on screen. Restore the real key after recording.
-2. Pick a clean terminal with a dark theme, font size 16 to 18, and a wide window so code fits.
-3. Show the folder tree once at the start so viewers see the layout before any code is written.
-4. Open these tabs ready to record:
-   - README.md and CLAUDE.md as narration reference
-   - VS Code with backend/app and frontend/app.py
-   - Browser at localhost:8501 for the final demo
+For each file, start with the behavior it supports, walk through the main data flow, then show a meaningful failure or regression test.
 
-## Recommended Recording Order
+## API demonstration sequence
 
-Use this exact sequence. The order matters because each file depends on the ones before it.
+1. `GET /health`: explain that readiness and a configured key do not prove provider authentication.
+2. `POST /workspaces`: keep its returned token off screen and use bearer authentication for subsequent requests.
+3. `POST /documents`: upload multipart field `file` and note the asynchronous `202` response.
+4. `GET /documents/{id}`: show `queued → reading → preparing → ready`.
+5. `POST /conversations`: submit the ready `document_id`.
+6. `POST /conversations/{id}/messages`: show `status`, `sources`, incremental `token` events, then `done`.
+7. Reuse the same request ID and question to demonstrate replay; a different question with that ID gets `409`.
+8. `GET /conversations?limit=20&offset=20`: explain that saved history extends beyond the overview's recent list.
 
-### Part 1 - Project Skeleton
+## Browser demonstration
 
-1. Create the folder structure:
+1. Attach a synthetic PDF and ask the first question in the same submission.
+2. Show preparation status, streamed output and a contextual follow-up.
+3. Open a source button, navigate manually to another page, then select the reference again.
+4. Open an inline citation and show its actual destination tab, exact passage and PDF page.
+5. Start a new conversation, then find the older one using saved-history search.
+6. Refresh to show browser restoration; describe the optional recovery-code flow without displaying a real code.
+7. Show a failed/scanned PDF and its recovery guidance.
+8. Export a conversation and demonstrate the narrow mobile layout.
 
-   ```
-   rag-pdf-qa/
-   └── backend/
-       └── app/
-   ```
-
-2. Create the empty package file:
-
-   ```
-   backend/app/__init__.py
-   ```
-
-   Mention it briefly and move on. It is normally empty.
-
-### Part 2 - Backend Foundation
-
-3. `backend/app/config.py`
-
-   Why first: every other backend file needs environment variables such as CHAT_API_KEY, LLM_MODEL, and FAISS_INDEX_DIR. Explain the Settings dataclass and env-var loading here.
-
-4. `backend/app/embeddings.py`
-
-   Loads the local sentence-transformers model all-MiniLM-L6-v2. Explain that it converts text into vectors and is used both during ingestion and during retrieval.
-
-5. `backend/app/db.py`
-
-   Implements the FAISS vector-store operations:
-
-   - Check whether a collection exists
-   - Create a FAISS index
-   - Add documents to a collection
-   - Save the index locally
-   - Load an existing index
-   - Return a retriever
-
-   This is the first major backend module. Spend the most time here.
-
-6. `backend/app/ingestion.py`
-
-   Implements the PDF ingestion pipeline in this order:
-
-   1. Load the PDF
-   2. Split it into chunks
-   3. Create embeddings
-   4. Save the documents and vectors in FAISS
-   5. Return the number of pages and chunks
-
-   Data flow:
-
-   ```
-   PDF -> pages -> chunks -> embeddings -> FAISS
-   ```
-
-7. `backend/app/rag_chain.py`
-
-   Implements the RAG chain:
-
-   1. Load the selected FAISS collection
-   2. Retrieve relevant document chunks
-   3. Format chunks as context
-   4. Build the prompt
-   5. Send the prompt to Groq
-   6. Parse the model response
-   7. Return the answer and source information
-
-   Important flow:
-
-   ```
-   question -> retrieve documents -> build prompt -> Groq -> answer
-   ```
-
-8. `backend/app/main.py`
-
-   The FastAPI application. Implement endpoints in this order:
-
-   - `GET /health` - liveness check
-   - `POST /ingest` - accept the PDF, call ingestion, return pages, chunks, collection
-   - `POST /ask` - accept the question, call the RAG function, return answer and sources
-
-   This connects every previously created backend module.
-
-### Part 3 - Backend Packaging
-
-Record these after the backend code is working so viewers understand why each dependency is needed.
-
-9. `backend/requirements.txt`
-10. `backend/Dockerfile`
-
-### Part 4 - Frontend
-
-11. Create the frontend folder:
-
-    ```
-    frontend/
-    ```
-
-12. `frontend/requirements.txt`
-13. `frontend/Dockerfile`
-
-14. `frontend/app.py`
-
-    Build the Streamlit UI in this order:
-
-    1. Import Streamlit and requests
-    2. Define BACKEND_URL
-    3. Page title and description
-    4. PDF file uploader
-    5. Text field for the collection name
-    6. Upload PDF button - calls `POST /ingest`
-    7. Text field for the question
-    8. Ask Question button - calls `POST /ask`
-    9. Display the answer
-    10. Display the retrieved sources
-
-### Part 5 - Root Project Files
-
-Record these last so you document and configure the project only after backend and frontend are both implemented.
-
-15. `docker-compose.yml`
-16. `render.yaml`
-17. `.env.example`
-18. `README.md`
-
-## Per-File Recording Rhythm
-
-For every source file, follow the same 3-beat rhythm:
-
-1. Why does this file exist - one or two sentences
-2. Read it top to bottom, explaining as you go
-3. Highlight the 1 to 2 lines that matter most
-
-Type every file yourself rather than pasting. Beginners benefit from seeing fingers on keyboard, even when it is slow.
-
-## End-to-End Demo
-
-After all files are recorded, do a full demo:
-
-1. Boot the backend: `uvicorn app.main:app --reload --port 8000`
-2. Boot the frontend: `BACKEND_URL=http://localhost:8000 streamlit run app.py`
-3. Open browser at `localhost:8501`
-4. Upload `demo.pdf`, click ingest, ask 2 to 3 questions, show sources
-
-## Editing Checklist
-
-After recording:
-
-- Cut dead air, pauses, filler words
-- Add zoom-ins on the key 1 to 2 lines per file (CapCut or DaVinci Resolve)
-- Add chapter timestamps for YouTube
-- Burn a subtle lower-third with the filename when each file appears
-- Re-record voice-over during edits where you read code aloud
-
-## Important Rule
-
-Do not record `backend/app/main.py` first. It imports the other backend files, so viewers will not understand it without first seeing `config.py`, `embeddings.py`, `db.py`, `ingestion.py`, and `rag_chain.py`.
+Finish by running the documented regression commands. Distinguish tests with fake models from the opt-in live evaluation, and describe the single-process storage model and public-hosting admission/usage limits accurately.

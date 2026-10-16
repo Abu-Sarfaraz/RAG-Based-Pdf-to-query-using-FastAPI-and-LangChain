@@ -19,7 +19,7 @@ from app.rag_chain import validate_citations
 from tests.helpers import FakeEmbeddings, FakeLLM, pdf_bytes
 
 
-class WorkflowTests(unittest.TestCase):
+class WorkflowTestCase(unittest.TestCase):
     def setUp(self):
         logging.getLogger("app.ingestion").setLevel(logging.CRITICAL)
         self.directory = tempfile.TemporaryDirectory(prefix="papertrail-tests-")
@@ -73,6 +73,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
 
+
+class WorkflowTests(WorkflowTestCase):
     def test_streams_persists_and_retrieves_once(self):
         document = self.ready(self.upload())
         self.assertEqual(document["status"], "ready", document)

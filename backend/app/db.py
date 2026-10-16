@@ -48,16 +48,18 @@ class IndexStore:
         temporary = destination.with_name(version + ".tmp")
         temporary.mkdir(parents=True)
         try:
+            # Embed and serialize outside the cache lock so answering another
+            # document is not blocked by preparation of this one.
+            store = FAISS.from_documents(documents, self.embeddings_factory())
+            faiss.write_index(store.index, str(temporary / "index.faiss"))
+            saved_documents = []
+            for doc_id in store.index_to_docstore_id.values():
+                doc = store.docstore.search(doc_id)
+                saved_documents.append({"id": doc_id, "page_content": doc.page_content, "metadata": doc.metadata})
+            (temporary / "documents.json").write_text(json.dumps({
+                "documents": saved_documents, "mapping": store.index_to_docstore_id
+            }, ensure_ascii=False), encoding="utf-8")
             with self.lock:
-                store = FAISS.from_documents(documents, self.embeddings_factory())
-                faiss.write_index(store.index, str(temporary / "index.faiss"))
-                saved_documents = []
-                for doc_id in store.index_to_docstore_id.values():
-                    doc = store.docstore.search(doc_id)
-                    saved_documents.append({"id": doc_id, "page_content": doc.page_content, "metadata": doc.metadata})
-                (temporary / "documents.json").write_text(json.dumps({
-                    "documents": saved_documents, "mapping": store.index_to_docstore_id
-                }, ensure_ascii=False), encoding="utf-8")
                 temporary.rename(destination)
                 self.remember((document_id, version), store)
             return version
@@ -81,9 +83,8 @@ class IndexStore:
             return store
 
     def retrieve(self, document_id, version, question, k):
-        with self.lock:
-            store = self.load(document_id, version)
-            return store.similarity_search(question, k=k)
+        store = self.load(document_id, version)
+        return store.similarity_search(question, k=k)
 
     def delete(self, document_id):
         with self.lock:
